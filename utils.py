@@ -5,65 +5,76 @@ from ddgs import DDGS
 
 
 # =========================
-# WEB SEARCH (DYNAMIC + FIXED)
+# WEB SEARCH (ROBUST + NEVER FAILS)
 # =========================
 
-def web_search(query):
+def web_search(query, num_results=5):
     urls = []
 
     try:
         with DDGS() as ddgs:
-            results = ddgs.text(query, max_results=3)
+            results = list(ddgs.text(query, max_results=num_results))
 
             for r in results:
-                if "href" in r:
-                    urls.append(r["href"])
+                link = r.get("href") or r.get("url")
+                if link and link.startswith("http"):
+                    urls.append(link)
 
     except Exception as e:
-        print("Search error:", e)
+        print("❌ Search error:", e)
 
-    # 🔥 FALLBACK (IMPORTANT — NEVER EMPTY)
+    # 🔥 STRONG FALLBACK (VERY IMPORTANT)
     if not urls:
+        print("⚠️ Using fallback URLs")
+
         urls = [
-            f"https://en.wikipedia.org/wiki/{query.replace(' ', '_')}"
+            f"https://en.wikipedia.org/wiki/{query.replace(' ', '_')}",
+            f"https://www.britannica.com/search?query={query}",
+            f"https://www.google.com/search?q={query}"
         ]
 
-    return urls
+    return urls[:num_results]
 
 
 # =========================
-# WEBSITE SCRAPER (ROBUST)
+# WEBSITE SCRAPER (STRONG + CLEAN)
 # =========================
 
 def scrape_website(url):
     try:
-        response = requests.get(
-            url,
-            timeout=10,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
 
-        # if blocked or failed
+        response = requests.get(url, headers=headers, timeout=10)
+
         if response.status_code != 200:
             return ""
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # remove unwanted tags
+        # ❌ Remove noise
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
 
-        text = soup.get_text(separator=" ", strip=True)
+        # ✅ Extract only meaningful text
+        paragraphs = soup.find_all("p")
 
-        return text[:2000]  # 🔥 limit for speed
+        text = " ".join([p.get_text(strip=True) for p in paragraphs])
+
+        # 🔥 Safety check
+        if len(text) < 100:
+            return ""
+
+        return text[:3000]
 
     except Exception as e:
-        print("Scraping error:", e)
+        print("❌ Scraping error:", e)
         return ""
 
 
 # =========================
-# PDF READER
+# PDF READER (SAFE)
 # =========================
 
 def read_pdf(file):
@@ -74,10 +85,13 @@ def read_pdf(file):
         for page in reader.pages:
             extracted = page.extract_text()
             if extracted:
-                text += extracted
+                text += extracted + "\n"
 
-        return text[:3000]  # 🔥 limit
+        if len(text.strip()) == 0:
+            return ""
+
+        return text[:4000]
 
     except Exception as e:
-        print("PDF error:", e)
+        print("❌ PDF error:", e)
         return ""
