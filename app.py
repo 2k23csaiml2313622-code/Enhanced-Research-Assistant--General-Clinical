@@ -14,10 +14,16 @@ from evaluation import evaluate_rag
 
 load_dotenv()
 
+api_key = os.getenv("GROQ_API_KEY")
+
+if not api_key:
+    st.error("❌ GROQ API key not found. Check your .env file.")
+    st.stop()
+
 llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
+    api_key=api_key,
     model="llama-3.1-8b-instant",
-    temperature=0.3
+    temperature=0.2
 )
 
 # =========================
@@ -31,7 +37,7 @@ st.set_page_config(
 )
 
 st.title("🎓 Student Deep Research Assistant")
-st.markdown("⚡ RAG System using **Web + Clinical (MIMIC-IV) Knowledge**")
+st.markdown("⚡ RAG System using **Web + Clinical Knowledge**")
 
 query = st.text_input("Enter your research topic")
 pdf = st.file_uploader("Upload PDF (optional)", type=["pdf"])
@@ -49,6 +55,10 @@ run_eval = st.checkbox("Enable Performance Evaluation")
 
 if st.button("Start Research"):
 
+    if not query.strip():
+        st.warning("⚠️ Please enter a query.")
+        st.stop()
+
     progress = st.progress(0)
     text_data = ""
 
@@ -57,7 +67,7 @@ if st.button("Start Research"):
     # =========================
 
     st.write("🔎 Searching web sources...")
-    urls = web_search(query)[:2]
+    urls = web_search(query)[:3]
 
     progress.progress(20)
 
@@ -95,12 +105,18 @@ if st.button("Start Research"):
     st.write(f"📊 Processed text size: {len(text_data)} characters")
 
     # =========================
-    # SAFETY CHECK
+    # 🔥 FIX: FALLBACK (CRITICAL)
     # =========================
 
     if not text_data.strip():
-        st.error("❌ No data found. Try another query.")
-        st.stop()
+
+        st.warning("⚠️ Web data not found. Using fallback knowledge...")
+
+        text_data = f"""
+        Topic: {query}
+
+        Provide a clear explanation, key concepts, causes, and important insights.
+        """
 
     # =========================
     # VECTOR DB
@@ -112,23 +128,26 @@ if st.button("Start Research"):
     progress.progress(80)
 
     # =========================
-    # 🔥 MODE-BASED RETRIEVAL
+    # RETRIEVAL
     # =========================
 
     context = retrieve_context(vector_db, query, mode)
 
     # =========================
-    # LLM
+    # LLM GENERATION
     # =========================
 
     st.write("🤖 Generating answer...")
 
     if mode == "Clinical Diagnostic Mode":
         prompt = f"""
-You are a clinical AI assistant.
+You are a clinical expert AI.
 
-STRICTLY prioritize clinical evidence.
-If any conflict occurs, trust clinical data.
+STRICT RULES:
+- Use ONLY clinical evidence from context
+- Do NOT use general knowledge
+- Be medically precise
+- If insufficient data → say "Insufficient clinical evidence"
 
 Context:
 {context}
@@ -140,7 +159,10 @@ Query:
         prompt = f"""
 You are a research assistant.
 
-Answer clearly and concisely using only relevant information.
+STRICT RULES:
+- Use ONLY the provided context
+- Keep answer clear, structured, and factual
+- Avoid unnecessary details
 
 Context:
 {context}
@@ -181,7 +203,7 @@ Query:
     )
 
     # =========================
-    # 🔥 EVALUATION (MODE AWARE)
+    # EVALUATION
     # =========================
 
     if run_eval:
@@ -192,10 +214,8 @@ Query:
 
             metrics = evaluate_rag(query, answer, contexts_list, mode)
 
-            # 🔥 Show metrics
             for key, value in metrics.items():
 
-                # ❌ Hide clinical score in general mode
                 if mode == "General Research" and "Clinical" in key:
                     continue
 
