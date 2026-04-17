@@ -5,22 +5,22 @@ import pandas as pd
 import streamlit as st
 
 # =========================
-# LOAD MODEL (ONCE)
+# 🔥 BETTER MODEL (MATCH RAG)
 # =========================
 
 @st.cache_resource
 def load_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    return SentenceTransformer("all-mpnet-base-v2")   # 🔥 upgraded
 
 model = load_model()
 
 # =========================
-# LOAD CLINICAL DATA (LIMITED)
+# LOAD CLINICAL DATA (INCREASE SIZE)
 # =========================
 
 @st.cache_resource
 def load_clinical_data():
-    df = pd.read_csv("data/mimic_final.csv", nrows=500)
+    df = pd.read_csv("data/mimic_final.csv", nrows=2000)  # 🔥 more coverage
     df = df.dropna(subset=["text", "summary"])
     return df
 
@@ -32,22 +32,32 @@ clinical_df = load_clinical_data()
 
 @st.cache_resource
 def compute_embeddings(texts):
-    return model.encode(texts)
+    return model.encode(texts, convert_to_numpy=True)
 
 clinical_texts = clinical_df["text"].tolist()
 clinical_summaries = clinical_df["summary"].tolist()
 clinical_embeddings = compute_embeddings(clinical_texts)
 
 # =========================
-# GET GROUND TRUTH
+# 🔥 BETTER GROUND TRUTH (TOP-K AVG)
 # =========================
 
 def get_ground_truth(query):
+
     try:
-        query_emb = model.encode([query])
+        query_emb = model.encode([query], convert_to_numpy=True)
+
         similarities = cosine_similarity(query_emb, clinical_embeddings)[0]
-        idx = similarities.argmax()
-        return clinical_summaries[idx]
+
+        # 🔥 take top 3 instead of 1
+        top_k_idx = similarities.argsort()[-3:]
+
+        combined_text = " ".join([
+            clinical_summaries[i] for i in top_k_idx
+        ])
+
+        return combined_text
+
     except:
         return ""
 
@@ -58,7 +68,6 @@ def get_ground_truth(query):
 def evaluate_rag(query, answer, contexts, mode):
 
     try:
-        # Clean contexts
         contexts = [c.strip() for c in contexts if c.strip()]
 
         if len(contexts) == 0:
@@ -74,32 +83,26 @@ def evaluate_rag(query, answer, contexts, mode):
         # EMBEDDINGS
         # =========================
 
-        query_emb = model.encode([query])
-        answer_emb = model.encode([answer])
-        context_emb = model.encode(contexts)
+        query_emb = model.encode([query], convert_to_numpy=True)
+        answer_emb = model.encode([answer], convert_to_numpy=True)
+        context_emb = model.encode(contexts, convert_to_numpy=True)
 
         # =========================
-        # METRICS
+        # METRICS (IMPROVED)
         # =========================
 
         relevance = cosine_similarity(query_emb, answer_emb)[0][0]
 
-        faithfulness = np.mean(
-            cosine_similarity(answer_emb, context_emb)
-        )
+        sim_matrix = cosine_similarity(answer_emb, context_emb)
 
-        precision = np.max(
-            cosine_similarity(answer_emb, context_emb)
-        )
+        faithfulness = np.mean(sim_matrix)
 
-        recall = np.mean(
-            cosine_similarity(context_emb, answer_emb)
-        )
+        precision = np.max(sim_matrix)
 
-        # 🔥 FIXED GROUNDEDNESS (more stable)
-        groundedness = np.percentile(
-            cosine_similarity(answer_emb, context_emb), 25
-        )
+        recall = np.mean(sim_matrix)   # 🔥 more stable
+
+        # 🔥 improved groundedness (avoid harsh min)
+        groundedness = np.percentile(sim_matrix, 30)
 
         # =========================
         # NORMALIZATION
@@ -117,7 +120,7 @@ def evaluate_rag(query, answer, contexts, mode):
         }
 
         # =========================
-        # 🔥 CLINICAL ALIGNMENT (ONLY IN CLINICAL MODE)
+        # 🔥 CLINICAL ALIGNMENT (FIXED)
         # =========================
 
         if mode == "Clinical Diagnostic Mode":
@@ -125,8 +128,11 @@ def evaluate_rag(query, answer, contexts, mode):
             ground_truth = get_ground_truth(query)
 
             if ground_truth:
-                gt_emb = model.encode([ground_truth])
+
+                gt_emb = model.encode([ground_truth], convert_to_numpy=True)
+
                 clinical_score = cosine_similarity(answer_emb, gt_emb)[0][0]
+
             else:
                 clinical_score = 0
 
